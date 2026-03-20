@@ -24,12 +24,6 @@ The study aims to identify key drivers of railway passenger volume in China by a
 * Key significant factors identified include average wages of urban employees and railway passenger turnover.
 * The analysis suggests that increasing high-end service capacity (e.g., soft sleepers) correlates positively with passenger volume.
 
-### Repository Structure
-* `src/`: Modular Python scripts for interpolation, transformation, and modeling.
-* `data/`: Directory for raw and processed datasets.
-* `outputs/`: Visualizations of model fits and statistical tables.
-* `main.py`: A unified script to execute the entire analysis pipeline.
-
 ### Limitations
 The study acknowledges several constraints, including a relatively small sample size, reliance on data ending in 2021, and a focus on linear modeling techniques.
 
@@ -51,12 +45,6 @@ The study acknowledges several constraints, including a relatively small sample 
 * 逐步回归模型表现最佳，均方误差 (MSE) 约为 0.000183。
 * 城镇单位就业人员平均工资和铁路旅客周转量被确定为显著影响因素。
 * 分析表明，增加高品质服务（如软卧车）的供给与客运量提升呈正相关。
-
-### 仓库结构
-* `src/`：包含插值、变换和建模的模块化 Python 脚本。
-* `data/`：存放原始数据和处理后数据的目录。
-* `outputs/`：存放模型拟合可视化图表和统计表格。
-* `main.py`：用于执行整个分析流程的统一调度脚本。
 
 ### 研究不足
 本研究承认存在一定的局限性，包括样本量较小、数据更新截止至 2021 年以及主要采用线性拟合方法等。
