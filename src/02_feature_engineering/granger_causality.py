@@ -1,60 +1,49 @@
 import pandas as pd
-import numpy as np
 from statsmodels.tsa.stattools import grangercausalitytests
-import warnings
 
-warnings.filterwarnings('ignore')
-
-def run_granger_causality(df, target_col, feature_cols, max_lag=3):
-    """
-    对目标变量和各个特征变量进行格兰杰因果检验
-    捕获小样本情况下的过拟合异常
-    """
-    print(f"[{target_col}] 的格兰杰因果检验结果 (最大滞后阶数: {max_lag})\n" + "="*60)
+def granger_test(df, target_col, feature_cols, max_lag=3):
+    # 执行 Granger 检验，重点捕获小样本下的 VAR 完美拟合异常
+    print(f"--- Granger Causality Test (Target: {target_col}, Max Lag: {max_lag}) ---")
     
-    results_summary = {}
+    status_dict = {}
 
-    for feature in feature_cols:
-        print(f"\n---> 正在检验: [{feature}] 是否格兰杰引起 [{target_col}]")
-        
-        test_data = df[[target_col, feature]].dropna()
+    for feat in feature_cols:
+        test_data = df[[target_col, feat]].dropna()
         
         try:
-            test_result = grangercausalitytests(test_data, maxlag=max_lag, verbose=False)
+            res = grangercausalitytests(test_data, maxlag=max_lag, verbose=False)
             
+            print(f">> {feat} -> {target_col}:")
             for lag in range(1, max_lag + 1):
-                p_value = test_result[lag][0]['ssr_ftest'][1]
-                significance = "显著" if p_value < 0.05 else "不显著"
-                print(f"     滞后阶数 {lag}: p-value = {p_value:.4f} ({significance})")
+                p_val = res[lag][0]['ssr_ftest'][1]
+                sig = "显著" if p_val < 0.05 else "不显著"
+                print(f"   Lag {lag}: p-value = {p_val:.4f} ({sig})")
                 
-            results_summary[feature] = "成功计算"
+            status_dict[feat] = "计算成功"
             
         except Exception as e:
-            error_msg = str(e)
-            if "perfect fit" in error_msg.lower():
-                print("     [异常捕获] 无法计算统计量。")
-                print("     [原因分析] 数据样本量较小，导致 VAR 模型对数据拟合得过于完美，引发过拟合。")
-                print("     [工程建议] 本数据集规模不足以支撑复杂的格兰杰因果分析，建议转用相关性分析或逐步回归降维。")
-                results_summary[feature] = "完美拟合 (过拟合)"
+            err_str = str(e).lower()
+            # 捕获 statsmodels 在自由度耗尽时抛出的完美拟合异常
+            if "perfect fit" in err_str:
+                print(f">> [警告] {feat} -> {target_col}: VAR 完美拟合 (样本量不足)，跳过检验。")
+                status_dict[feat] = "完美拟合"
             else:
-                print(f"     [其他异常]: {error_msg}")
-                results_summary[feature] = "计算异常"
+                print(f">> [错误] {feat}: {err_str}")
+                status_dict[feat] = "计算异常"
 
-    return results_summary
+    return status_dict
 
 if __name__ == '__main__':
     try:
-        input_path = '../../data/processed/data_for_stat_tests.xlsx'
-        df = pd.read_excel(input_path)
+        df = pd.read_excel('../../data/processed/data_for_stat_tests.xlsx')
     except FileNotFoundError:
         df = pd.read_excel('data_sd.xlsx')
 
-    target_column = df.columns[-1]
-    feature_columns = df.columns[1:-1]
+    target = df.columns[-1]
+    features = df.columns[1:-1]
 
-    summary = run_granger_causality(df, target_col=target_column, feature_cols=feature_columns, max_lag=3)
+    summary = granger_test(df, target, features, max_lag=3)
     
-    print("\n" + "="*60)
-    print("格兰杰因果检验状态汇总:")
-    for feat, status in summary.items():
-        print(f" - {feat}: {status}")
+    print("\n--- Granger Test 状态汇总 ---")
+    for f, s in summary.items():
+        print(f"{f}: {s}")
