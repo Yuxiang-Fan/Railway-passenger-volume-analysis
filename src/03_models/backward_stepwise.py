@@ -1,112 +1,104 @@
+import os
 import pandas as pd
 import statsmodels.api as sm
 import matplotlib.pyplot as plt
-import os
-import warnings
-from sklearn.metrics import mean_squared_error
+from sklearn.metrics import mean_squared_error, r2_score
 
-warnings.filterwarnings('ignore')
-
-def load_and_prepare_data(filepath):
-    """
-    加载数据并分离特征与目标变量
-    """
-    df = pd.read_excel(filepath)
-    X = df.iloc[:, 1:-1]
-    Y = df.iloc[:, -1]
-    return X, Y
-
-def backward_stepwise_selection(X, y):
-    """
-    真正的后向逐步回归算法
-    从包含所有特征的全模型开始，每次剔除一个最不重要的特征，直到 AIC 无法进一步降低
-    """
+def backward_stepwise_selection(X, y, criterion='aic'):
+    # 基于信息准则的后向逐步回归，用于处理多重共线性与特征降维
     current_features = X.columns.tolist()
     
-    X_initial = sm.add_constant(X[current_features])
-    initial_model = sm.OLS(y, X_initial).fit()
-    best_aic = initial_model.aic
+    # 拟合包含所有特征的初始 OLS 模型
+    X_init = sm.add_constant(X[current_features])
+    best_score = getattr(sm.OLS(y, X_init).fit(), criterion)
     
-    print("\n====== 开始执行后向逐步回归特征剔除 ======")
-    print(f" [Start] 初始全量特征模型 AIC: {best_aic:.4f}")
+    print(f"--- Backward Stepwise Selection ({criterion.upper()}) ---")
+    print(f">> Initial {criterion.upper()}: {best_score:.4f}")
     
-    while len(current_features) > 0:
-        step_aic_dict = {}
+    while current_features:
+        step_scores = {}
         
-        for feature_to_remove in current_features:
-            reduced_features = list(set(current_features) - {feature_to_remove})
+        for feature in current_features:
+            reduced_features = list(set(current_features) - {feature})
             
+            # 处理特征被全部剔除的极端情况 (仅保留常数项)
             if not reduced_features:
                 X_subset = sm.add_constant(pd.DataFrame(index=X.index))
             else:
                 X_subset = sm.add_constant(X[reduced_features])
             
             model = sm.OLS(y, X_subset).fit()
-            step_aic_dict[feature_to_remove] = model.aic
+            # 动态获取对应的评估准则属性 (如 model.aic)
+            step_scores[feature] = getattr(model, criterion)
             
-        best_feature_to_remove = min(step_aic_dict, key=step_aic_dict.get)
-        best_step_aic = step_aic_dict[best_feature_to_remove]
+        # 找出剔除后准则值最小的特征
+        best_drop = min(step_scores, key=step_scores.get)
+        best_step_score = step_scores[best_drop]
         
-        if best_step_aic < best_aic:
-            current_features.remove(best_feature_to_remove)
-            best_aic = best_step_aic
-            print(f" [-] 成功剔除: {best_feature_to_remove: <25} | 当前模型 AIC: {best_aic:.4f}")
+        # 判断是否接受剔除
+        if best_step_score < best_score:
+            current_features.remove(best_drop)
+            best_score = best_step_score
+            print(f">> Drop: {best_drop: <20} | New {criterion.upper()}: {best_score:.4f}")
         else:
-            print(f"\n [!] 停止搜索：继续剔除任何现有特征均会导致 AIC 上升。")
+            print(f">> 停止搜索: 剔除任何现有特征均会导致 {criterion.upper()} 上升。")
             break
             
     return current_features
 
-def evaluate_and_plot_model(X, y, selected_features):
-    """
-    基于筛选出的最优特征子集，输出模型报告并绘制拟合图
-    """
-    print("\n====== 最终最优模型摘要 ======")
-    print(f"最终保留的核心特征集: {selected_features}")
-    
+def evaluate_model(X, y, selected_features):
+    # 核心特征子集的 OLS 建模与拟合优度评估
     X_final = sm.add_constant(X[selected_features])
-    best_model = sm.OLS(y, X_final).fit()
+    model = sm.OLS(y, X_final).fit()
     
-    print(best_model.summary())
+    print("\n--- Final Model Summary ---")
+    print(f"Selected Features: {selected_features}")
+    print(model.summary())
     
-    print("\n====== 模型参数 ======")
-    print(best_model.params)
+    y_pred = model.predict(X_final)
     
-    y_pred = best_model.predict(X_final)
+    # 引入无量纲的 R2 和调整后 R2，增强模型说服力
+    r2 = r2_score(y, y_pred)
+    adj_r2 = 1 - (1 - r2) * (len(y) - 1) / (len(y) - len(selected_features) - 1)
     mse = mean_squared_error(y, y_pred)
-    print(f"\n====== 均方误差 (MSE) ======")
-    print(f"Mean Squared Error (MSE): {mse:.15f}")
+    
+    print("\n--- Model Performance ---")
+    print(f">> R-squared:          {r2:.4f}")
+    print(f">> Adjusted R-squared: {adj_r2:.4f}")
+    print(f">> Normalized MSE:     {mse:.4e} (基于预处理后的无量纲数据)")
     
     plt.figure(figsize=(10, 6))
+    plt.plot(y.values, label='Actual', marker='o', linestyle='-', alpha=0.8)
+    plt.plot(y_pred.values, label='Predicted', marker='^', linestyle='--', alpha=0.8)
     
-    plt.plot(y.values, label='Actual (真实值)', marker='o', linestyle='-', alpha=0.8)
-    plt.plot(y_pred.values, label='Predicted (预测值)', marker='^', linestyle='--', alpha=0.8)
-    
-    plt.title('Backward Stepwise Regression: Actual vs Predicted')
-    plt.xlabel('Observation (样本序号)')
-    plt.ylabel('Value (客运量)')
+    plt.title('Stepwise Regression: Actual vs Predicted')
+    plt.xlabel('Sample Index')
+    plt.ylabel('Normalized Target Value')
     plt.legend()
     plt.grid(True, linestyle=':', alpha=0.6)
     
-    output_dir = '../../outputs/figures'
-    os.makedirs(output_dir, exist_ok=True)
-    save_path = os.path.join(output_dir, 'backward_stepwise_predictions.png')
-    plt.savefig(save_path, dpi=300, bbox_inches='tight')
-    print(f"\n图表已成功保存至: {save_path}")
+    out_dir = 'outputs/figures'
+    os.makedirs(out_dir, exist_ok=True)
+    save_path = os.path.join(out_dir, 'stepwise_fit.png')
     
+    plt.savefig(save_path, dpi=300, bbox_inches='tight')
+    print(f"\n>> 拟合图已保存至: {save_path}")
     plt.close()
 
 if __name__ == '__main__':
-    try:
-        data_file = '../../data/processed/data_transformed_final.xlsx'
-        pd.read_excel(data_file)
-    except FileNotFoundError:
-        data_file = 'data_sd.xlsx'
+    # 提供通用的数据接口规范，而非强绑定特定文件
+    data_file = 'data/processed/dataset_ready.xlsx'
+    
+    if os.path.exists(data_file):
+        print(f"加载数据集: {data_file}")
+        df = pd.read_excel(data_file)
         
-    print("启动后向逐步回归建模流程...")
-    
-    X_data, y_data = load_and_prepare_data(data_file)
-    
-    optimal_features = backward_stepwise_selection(X_data, y_data)
-    
-    evaluate_and_plot_model(X_data, y_data, optimal_features)
+        # 假设第一列为时间或ID索引，最后一列为目标变量
+        X_data = df.iloc[:, 1:-1]
+        y_data = df.iloc[:, -1]
+        
+        optimal_features = backward_stepwise_selection(X_data, y_data, criterion='aic')
+        evaluate_model(X_data, y_data, optimal_features)
+    else:
+        print(f">> [提示] 未找到 {data_file}。")
+        print(">> 请确保原始数据已通过数据预处理流水线，并放置在正确目录。")
