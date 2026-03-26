@@ -1,47 +1,43 @@
-import pandas as pd
+import os
 import numpy as np
+import pandas as pd
 from sklearn.preprocessing import MinMaxScaler, StandardScaler
 
-def apply_log_transform(df, columns):
-    """
-    对指定列进行对数变换，以增强数据稳定性并减少异方差性
-    使用 log(x + 1) 以处理可能存在的零值
-    """
-    df_log = df.copy()
-    for col in columns:
-        if (df_log[col] <= 0).any():
-            print(f"警告: {col} 列包含非正数，将使用 log1p (log(1+x)) 处理。")
-            df_log[col] = np.log1p(df_log[col])
+def apply_log_transform(df, cols):
+    # 针对偏态数据做对数平滑，处理异方差
+    res_df = df.copy()
+    for c in cols:
+        # 兼容数据中含0或负数的情况
+        if (res_df[c] <= 0).any():
+            res_df[c] = np.log1p(res_df[c])
         else:
-            df_log[col] = np.log(df_log[col])
-    return df_log
+            res_df[c] = np.log(res_df[c])
+    return res_df
 
-def normalize_data(df, columns):
-    """
-    去量纲化：使用 Min-Max 标准化将数据统一缩放到 [0, 1] 范围内
-    """
-    df_norm = df.copy()
+def minmax_scale(df, cols):
+    # 归一化到 [0, 1]
+    res_df = df.copy()
     scaler = MinMaxScaler()
-    df_norm[columns] = scaler.fit_transform(df_norm[columns])
-    return df_norm, scaler
+    res_df[cols] = scaler.fit_transform(res_df[cols])
+    return res_df, scaler
 
-def standardize_data(df, columns):
-    """
-    Z-score 标准化：使数据均值为 0，方差为 1，主要用于 SVR 和岭回归模型
-    """
-    df_std = df.copy()
+def zscore_scale(df, cols):
+    # Z-score 标准化，主要供 SVR 和岭回归等对量纲敏感的模型使用
+    res_df = df.copy()
     scaler = StandardScaler()
-    df_std[columns] = scaler.fit_transform(df_std[columns])
-    return df_std, scaler
+    res_df[cols] = scaler.fit_transform(res_df[cols])
+    return res_df, scaler
 
 if __name__ == '__main__':
-    try:
-        input_path = '../../data/processed/data_interpolated.xlsx'
-        df = pd.read_excel(input_path)
-    except FileNotFoundError:
-        df = pd.read_excel('data_interpolated.xlsx')
+    # 路径配置
+    input_path = '../../data/processed/data_interpolated.xlsx'
+    if not os.path.exists(input_path):
+        input_path = 'data_interpolated.xlsx'  # 降级到当前目录找文件
 
-    feature_cols = [
+    df = pd.read_excel(input_path)
+
+    # 划分特征和目标变量
+    features = [
         'GDP(现价):第三产业:年', 
         'GDP(现价):交通运输、仓储和邮政业:年',
         '城镇单位就业人员平均工资:年', 
@@ -51,24 +47,28 @@ if __name__ == '__main__':
         '铁路客车拥有量:硬座车:年', 
         '高速铁路营业里程:年'
     ]
-    target_col = ['客运量:铁路:年']
-    all_cols = feature_cols + target_col
+    targets = ['客运量:铁路:年']
+    process_cols = features + targets
 
-    print("正在进行去量纲化处理...")
-    df_normalized, minmax_scaler = normalize_data(df, all_cols)
+    # 1. 归一化 (去量纲)
+    df_norm, _ = minmax_scale(df, process_cols)
 
-    print("正在进行对数变换...")
-    df_log = apply_log_transform(df_normalized, all_cols)
+    # 2. 对数变换 
+    df_log = apply_log_transform(df_norm, process_cols)
 
-    print("正在进行 Z-score 标准化...")
-    df_final, z_scaler = standardize_data(df_log, all_cols)
+    # 3. Z-score 标准化
+    df_final, _ = zscore_scale(df_log, process_cols)
 
-    output_path_log = '../../data/processed/data_for_stat_tests.xlsx'
-    output_path_final = '../../data/processed/data_transformed_final.xlsx'
+    # 结果保存
+    out_dir = '../../data/processed'
+    os.makedirs(out_dir, exist_ok=True)
     
-    df_log.to_excel(output_path_log, index=False)
-    df_final.to_excel(output_path_final, index=False)
+    log_out = os.path.join(out_dir, 'data_for_stat_tests.xlsx')
+    final_out = os.path.join(out_dir, 'data_transformed_final.xlsx')
     
-    print(f"数据转换完成！")
-    print(f"统计检验版本已保存至: {output_path_log}")
-    print(f"模型训练版本已保存至: {output_path_final}")
+    df_log.to_excel(log_out, index=False)
+    df_final.to_excel(final_out, index=False)
+    
+    print(">> 数据转换流水线执行完毕。")
+    print(f"统计检验版本 (ADF等) -> {log_out}")
+    print(f"模型训练版本 (SVR/Ridge) -> {final_out}")
