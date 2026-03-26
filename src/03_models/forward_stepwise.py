@@ -1,108 +1,97 @@
+import os
 import pandas as pd
 import statsmodels.api as sm
 import matplotlib.pyplot as plt
-import os
-import warnings
-from sklearn.metrics import mean_squared_error
+from sklearn.metrics import mean_squared_error, r2_score
 
-warnings.filterwarnings('ignore')
-
-def load_and_prepare_data(filepath):
-    """
-    加载数据并分离特征与目标变量
-    """
-    df = pd.read_excel(filepath)
-    X = df.iloc[:, 1:-1]
-    Y = df.iloc[:, -1]
-    return X, Y
-
-def forward_stepwise_selection(X, y):
-    """
-    真正的前向逐步回归算法 (贪婪算法)
-    以 AIC (赤池信息准则) 为评估指标，逐步将特征加入模型
-    """
+def forward_stepwise_selection(X, y, criterion='aic'):
+    # 基于信息准则的前向逐步回归特征筛选 (贪心算法)
     initial_features = X.columns.tolist()
     best_features = []
-    best_aic = float('inf')
     
-    print("\n====== 开始执行前向逐步回归特征筛选 ======")
+    # 拟合仅包含常数项的空模型，获取基准得分
+    X_null = sm.add_constant(pd.DataFrame(index=X.index))
+    best_score = getattr(sm.OLS(y, X_null).fit(), criterion)
     
-    while len(initial_features) > 0:
+    print(f"--- Forward Stepwise Selection ({criterion.upper()}) ---")
+    print(f">> Null Model {criterion.upper()}: {best_score:.4f}")
+    
+    while initial_features:
         remaining_features = list(set(initial_features) - set(best_features))
-        new_pval = pd.Series(index=remaining_features, dtype=float)
+        step_scores = {}
         
-        step_aic_dict = {}
-        
-        for new_column in remaining_features:
-            model_features = best_features + [new_column]
+        for feature in remaining_features:
+            model_features = best_features + [feature]
             X_subset = sm.add_constant(X[model_features])
             
             model = sm.OLS(y, X_subset).fit()
-            step_aic_dict[new_column] = model.aic
+            step_scores[feature] = getattr(model, criterion)
             
-        best_step_feature = min(step_aic_dict, key=step_aic_dict.get)
-        best_step_aic = step_aic_dict[best_step_feature]
+        # 找出加入后使准则值最小的特征
+        best_add = min(step_scores, key=step_scores.get)
+        best_step_score = step_scores[best_add]
         
-        if best_step_aic < best_aic:
-            best_features.append(best_step_feature)
-            best_aic = best_step_aic
-            print(f" [+] 选入特征: {best_step_feature: <25} | 当前模型 AIC: {best_aic:.4f}")
+        # 判断是否接受加入新特征
+        if best_step_score < best_score:
+            best_features.append(best_add)
+            best_score = best_step_score
+            print(f">> Add: {best_add: <20} | New {criterion.upper()}: {best_score:.4f}")
         else:
-            print(f"\n [!] 停止搜索：加入其余任何特征均无法进一步降低 AIC。")
+            print(f">> 停止搜索: 加入任何剩余特征均会导致 {criterion.upper()} 上升。")
             break
             
     return best_features
 
-def evaluate_and_plot_model(X, y, selected_features):
-    """
-    基于筛选出的最优特征子集，输出模型报告并绘制拟合图
-    """
-    print("\n====== 最终最优模型摘要 ======")
-    print(f"最终入选的特征集: {selected_features}")
-    
+def evaluate_model(X, y, selected_features):
+    # 核心特征子集的 OLS 建模与拟合优度评估
     X_final = sm.add_constant(X[selected_features])
-    best_model = sm.OLS(y, X_final).fit()
+    model = sm.OLS(y, X_final).fit()
     
-    print(best_model.summary())
+    print("\n--- Final Model Summary ---")
+    print(f"Selected Features: {selected_features}")
+    print(model.summary())
     
-    print("\n====== 模型参数 ======")
-    print(best_model.params)
+    y_pred = model.predict(X_final)
     
-    y_pred = best_model.predict(X_final)
+    # 引入无量纲的 R2 和调整后 R2
+    r2 = r2_score(y, y_pred)
+    adj_r2 = 1 - (1 - r2) * (len(y) - 1) / (len(y) - len(selected_features) - 1)
     mse = mean_squared_error(y, y_pred)
-    print(f"\n====== 均方误差 (MSE) ======")
-    print(f"Mean Squared Error (MSE): {mse:.15f}")
+    
+    print("\n--- Model Performance ---")
+    print(f">> R-squared:          {r2:.4f}")
+    print(f">> Adjusted R-squared: {adj_r2:.4f}")
+    print(f">> Normalized MSE:     {mse:.4e} (基于预处理数据)")
     
     plt.figure(figsize=(10, 6))
-    
-    plt.plot(y.values, label='Actual (真实值)', marker='o', linestyle='-', alpha=0.8)
-    plt.plot(y_pred.values, label='Predicted (预测值)', marker='^', linestyle='--', alpha=0.8)
+    plt.plot(y.values, label='Actual', marker='o', linestyle='-', alpha=0.8)
+    plt.plot(y_pred.values, label='Predicted', marker='^', linestyle='--', alpha=0.8)
     
     plt.title('Forward Stepwise Regression: Actual vs Predicted')
-    plt.xlabel('Observation (样本序号)')
-    plt.ylabel('Value (客运量)')
+    plt.xlabel('Sample Index')
+    plt.ylabel('Normalized Target Value')
     plt.legend()
     plt.grid(True, linestyle=':', alpha=0.6)
     
-    output_dir = '../../outputs/figures'
-    os.makedirs(output_dir, exist_ok=True)
-    save_path = os.path.join(output_dir, 'forward_stepwise_predictions.png')
-    plt.savefig(save_path, dpi=300, bbox_inches='tight')
-    print(f"\n图表已成功保存至: {save_path}")
+    out_dir = 'outputs/figures'
+    os.makedirs(out_dir, exist_ok=True)
+    save_path = os.path.join(out_dir, 'forward_stepwise_fit.png')
     
+    plt.savefig(save_path, dpi=300, bbox_inches='tight')
+    print(f"\n>> 拟合图已保存至: {save_path}")
     plt.close()
 
 if __name__ == '__main__':
-    try:
-        data_file = '../../data/processed/data_transformed_final.xlsx'
-        pd.read_excel(data_file)
-    except FileNotFoundError:
-        data_file = 'data_sd.xlsx'
+    data_file = 'data/processed/dataset_ready.xlsx'
+    
+    if os.path.exists(data_file):
+        print(f"加载数据集: {data_file}")
+        df = pd.read_excel(data_file)
         
-    print("启动前向逐步回归建模流程...")
-    
-    X_data, y_data = load_and_prepare_data(data_file)
-    
-    optimal_features = forward_stepwise_selection(X_data, y_data)
-    
-    evaluate_and_plot_model(X_data, y_data, optimal_features)
+        X_data = df.iloc[:, 1:-1]
+        y_data = df.iloc[:, -1]
+        
+        optimal_features = forward_stepwise_selection(X_data, y_data, criterion='aic')
+        evaluate_model(X_data, y_data, optimal_features)
+    else:
+        print(f">> [提示] 未找到 {data_file}。请确保数据已完成预处理流水线。")
